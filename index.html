@@ -344,6 +344,36 @@
   }
   .disclaimer .icon { font-size:18px; flex-shrink:0; margin-top:1px; }
 
+  /* ── LOGO PREVIEW MODAL ── */
+  .logo-preview-overlay {
+    display:none; position:fixed; inset:0; z-index:600;
+    background:rgba(13,43,94,0.72); align-items:center; justify-content:center;
+  }
+  .logo-preview-overlay.open { display:flex; }
+  .logo-preview-modal {
+    background:var(--surface); border-radius:24px; padding:32px;
+    width:min(480px,94vw); box-shadow:0 20px 60px rgba(13,43,94,0.35);
+  }
+  .logo-preview-modal h2 { font-size:1.25rem; color:var(--navy); margin-bottom:4px; }
+  .logo-preview-modal p  { font-size:0.85rem; color:var(--muted); margin-bottom:20px; }
+  .logo-checker {
+    width:100%; aspect-ratio:1/0.7; border-radius:14px; border:1.5px solid var(--border);
+    background: repeating-conic-gradient(#d0d5de 0% 25%, #f0f3f8 0% 50%) 0 0 / 16px 16px;
+    display:flex; align-items:center; justify-content:center; overflow:hidden; margin-bottom:20px;
+  }
+  .logo-checker img { max-width:85%; max-height:85%; object-fit:contain; }
+  .logo-preview-controls { margin-bottom:20px; }
+  .logo-preview-controls label {
+    display:flex; justify-content:space-between; align-items:center;
+    font-size:0.82rem; font-weight:600; color:var(--navy); margin-bottom:8px;
+  }
+  .logo-preview-controls input[type=range] { width:100%; accent-color:var(--navy); }
+  .logo-preview-hint { font-size:0.78rem; color:var(--muted); margin-top:6px; }
+  .logo-keep-row { display:flex; align-items:center; gap:8px; margin-bottom:22px; font-size:0.85rem; color:var(--text); cursor:pointer; }
+  .logo-keep-row input { accent-color:var(--navy); width:16px; height:16px; cursor:pointer; }
+  .logo-preview-actions { display:flex; gap:10px; }
+  .logo-preview-actions .btn { flex:1; }
+
   /* ── FEEDBACK BUBBLE ── */
   .fb-bubble {
     position:fixed; bottom:28px; right:28px; z-index:500;
@@ -650,6 +680,38 @@
 
 <div class="footer-mark">A rough preview tool by <strong>Consolidus</strong> · Final artwork prepared by our design team</div>
 
+<!-- LOGO PREVIEW MODAL -->
+<div class="logo-preview-overlay" id="logoPreviewOverlay">
+  <div class="logo-preview-modal">
+    <h2>Review your logo</h2>
+    <p>Check that the background looks right before generating your mockup. Adjust the tolerance slider if any background remains or if too much was removed.</p>
+
+    <div class="logo-checker">
+      <img id="logoPreviewCheck" src="" alt="Logo preview" />
+    </div>
+
+    <div class="logo-preview-controls">
+      <label>
+        Background removal tolerance
+        <span id="toleranceVal">52</span>
+      </label>
+      <input type="range" id="toleranceSlider" min="10" max="90" value="52"
+        oninput="document.getElementById('toleranceVal').textContent=this.value; rerunBgRemoval()" />
+      <div class="logo-preview-hint">Increase if background remnants remain · Decrease if logo colors are being removed</div>
+    </div>
+
+    <label class="logo-keep-row">
+      <input type="checkbox" id="keepOriginalCheck" onchange="toggleKeepOriginal()" />
+      Use original file without any background removal
+    </label>
+
+    <div class="logo-preview-actions">
+      <button class="btn btn-secondary" onclick="closeLogoPreview()">← Back</button>
+      <button class="btn btn-gold" onclick="confirmAndGenerate()">Looks good — Generate Mockup ✨</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL -->
 <div class="modal-overlay" id="modalOverlay" onclick="handleOverlayClick(event)">
   <div class="modal">
@@ -846,6 +908,9 @@ function processFile(file) {
   if (renderable) {
     const reader = new FileReader();
     reader.onload = ev => {
+      // Store the raw original so logo preview can re-run bg removal at any tolerance
+      _originalLogoDataUrl = ev.target.result;
+      state._rawLogoDataUrl = ev.target.result;
       // Show thumb with spinner while removing bg
       prevImg.src = ev.target.result;
       prevImg.style.display = 'block';
@@ -881,7 +946,7 @@ function processFile(file) {
    removing any pixel within tolerance. A second pass
    cleans up semi-transparent fringe (anti-aliasing).
 ════════════════════════════════════════════════════ */
-function removeBackground(dataUrl, callback) {
+function removeBackground(dataUrl, callback, toleranceOverride) {
   const img = new Image();
   img.onload = () => {
     const W = img.width, H = img.height;
@@ -927,8 +992,8 @@ function removeBackground(dataUrl, callback) {
     if(count===0){ callback(dataUrl, false); return; }
     const bgR=rSum/count, bgG=gSum/count, bgB=bSum/count;
 
-    const TOLERANCE = 52;   // higher tolerance catches off-white / shadow variation
-    const FRINGE    = 80;   // wider fringe for better anti-alias cleanup
+    const TOLERANCE = toleranceOverride != null ? toleranceOverride : 52;
+    const FRINGE    = Math.round(TOLERANCE * 1.54);  // fringe scales proportionally with tolerance
 
     // ── 2. Build border seeds ──
     const seeds = [];
@@ -1204,9 +1269,66 @@ function photoLogoArea(dx,dy,dw,dh,placement,product){
 }
 
 /* ════════════════════════════
+   LOGO PREVIEW
+════════════════════════════ */
+// Stored original data URL (before any bg removal) so we can re-run with new tolerance
+let _originalLogoDataUrl = null;
+
+function showLogoPreview() {
+  // If no logo or it's an art file, skip preview and go straight to mockup
+  if (!state.logoDataUrl || state.isArtFile) { runGenerateMockup(); return; }
+
+  // Store the raw original so we can re-run removal at any tolerance
+  if (!_originalLogoDataUrl) _originalLogoDataUrl = state._rawLogoDataUrl || state.logoDataUrl;
+
+  document.getElementById('keepOriginalCheck').checked = false;
+  document.getElementById('toleranceSlider').value = 52;
+  document.getElementById('toleranceVal').textContent = '52';
+  document.getElementById('logoPreviewCheck').src = state.logoDataUrl;
+  document.getElementById('logoPreviewOverlay').classList.add('open');
+}
+
+function closeLogoPreview() {
+  document.getElementById('logoPreviewOverlay').classList.remove('open');
+}
+
+function toggleKeepOriginal() {
+  const keep = document.getElementById('keepOriginalCheck').checked;
+  document.getElementById('toleranceSlider').disabled = keep;
+  const src = keep ? (_originalLogoDataUrl || state.logoDataUrl) : state.logoDataUrl;
+  // If keeping original, show raw; otherwise show current processed version
+  if (keep && _originalLogoDataUrl) {
+    document.getElementById('logoPreviewCheck').src = _originalLogoDataUrl;
+  }
+}
+
+function rerunBgRemoval() {
+  if (!_originalLogoDataUrl) return;
+  const tol = parseInt(document.getElementById('toleranceSlider').value);
+  removeBackground(_originalLogoDataUrl, (result) => {
+    state.logoDataUrl = result;
+    document.getElementById('logoPreviewCheck').src = result;
+  }, tol);
+}
+
+function confirmAndGenerate() {
+  const keep = document.getElementById('keepOriginalCheck').checked;
+  if (keep && _originalLogoDataUrl) {
+    state.logoDataUrl = _originalLogoDataUrl;
+  }
+  closeLogoPreview();
+  runGenerateMockup();
+}
+
+/* ════════════════════════════
    GENERATE MOCKUP
 ════════════════════════════ */
 function generateMockup() {
+  // Show logo preview first so user can verify bg removal before generating
+  showLogoPreview();
+}
+
+function runGenerateMockup() {
   state.logoSize = parseInt(document.getElementById('sizeSlider').value);
   document.getElementById('sum-product').textContent   = state.productLabel;
   document.getElementById('sum-color').textContent     = state.colorLabel || '—';
