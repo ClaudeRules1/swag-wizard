@@ -966,7 +966,16 @@ function removeBackground(dataUrl, callback) {
       if(y<H-1) queue.push(idx+W);
     }
 
-    // ── 4. Fringe pass x2: soften anti-aliased edges ──
+    // ── 4. Interior cleanup: remove enclosed background pockets ──
+    // The border flood fill can't reach regions enclosed by logo pixels (e.g. inside a letter R).
+    // Any remaining opaque pixel that still matches the background color must be in one of those
+    // enclosed pockets — it's safe to remove it globally.
+    for(let i=0; i<d.length; i+=4){
+      if(d[i+3]===0) continue;
+      if(colorDiff(d[i],d[i+1],d[i+2], bgR,bgG,bgB) <= TOLERANCE) d[i+3]=0;
+    }
+
+    // ── 5. Fringe pass x2: soften anti-aliased edges ──
     // Run twice — second pass catches pixels newly adjacent after first pass.
     for(let pass=0; pass<2; pass++){
       for(let y=1; y<H-1; y++){
